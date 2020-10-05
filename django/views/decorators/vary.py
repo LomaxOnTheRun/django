@@ -1,8 +1,10 @@
-from functools import wraps
-
 from django.utils.cache import patch_vary_headers
+from django.utils.decorators import (
+    sync_and_async_middleware, sync_async_wrapper,
+)
 
 
+@sync_and_async_middleware
 def vary_on_headers(*headers):
     """
     A view decorator that adds the specified headers to the Vary header of the
@@ -14,17 +16,16 @@ def vary_on_headers(*headers):
 
     Note that the header names are not case-sensitive.
     """
-    def decorator(func):
-        @wraps(func)
-        def inner_func(*args, **kwargs):
-            response = func(*args, **kwargs)
+    def decorator(view_func):
+        def process_response(response):
             patch_vary_headers(response, headers)
             return response
-        return inner_func
+        return sync_async_wrapper(view_func, process_response=process_response)
     return decorator
 
 
-def vary_on_cookie(func):
+@sync_and_async_middleware
+def vary_on_cookie(view_func):
     """
     A view decorator that adds "Cookie" to the Vary header of a response. This
     indicates that a page's contents depends on cookies. Usage:
@@ -33,9 +34,7 @@ def vary_on_cookie(func):
         def index(request):
             ...
     """
-    @wraps(func)
-    def inner_func(*args, **kwargs):
-        response = func(*args, **kwargs)
+    def process_response(response):
         patch_vary_headers(response, ('Cookie',))
         return response
-    return inner_func
+    return sync_async_wrapper(view_func, process_response=process_response)
