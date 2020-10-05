@@ -1,5 +1,6 @@
+import asyncio
+from datetime import datetime
 from functools import update_wrapper, wraps
-from unittest import TestCase
 
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.decorators import (
@@ -7,7 +8,7 @@ from django.contrib.auth.decorators import (
 )
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.middleware.clickjacking import XFrameOptionsMiddleware
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 from django.utils.decorators import method_decorator
 from django.utils.functional import keep_lazy, keep_lazy_text, lazy
 from django.utils.safestring import mark_safe
@@ -17,8 +18,16 @@ from django.views.decorators.cache import (
 from django.views.decorators.clickjacking import (
     xframe_options_deny, xframe_options_exempt, xframe_options_sameorigin,
 )
+from django.views.decorators.csrf import (
+    csrf_exempt, csrf_protect, ensure_csrf_cookie, requires_csrf_token,
+)
+from django.views.decorators.debug import (
+    sensitive_post_parameters, sensitive_variables,
+)
+from django.views.decorators.gzip import gzip_page
 from django.views.decorators.http import (
-    condition, require_GET, require_http_methods, require_POST, require_safe,
+    condition, etag, last_modified, require_GET, require_http_methods,
+    require_POST, require_safe,
 )
 from django.views.decorators.vary import vary_on_cookie, vary_on_headers
 
@@ -122,14 +131,6 @@ class DecoratorsTest(TestCase):
 
         self.assertEqual(response, ['test2', 'test1'])
 
-    def test_cache_page(self):
-        def my_view(request):
-            return "response"
-        my_view_cached = cache_page(123)(my_view)
-        self.assertEqual(my_view_cached(HttpRequest()), "response")
-        my_view_cached2 = cache_page(123, key_prefix="test")(my_view)
-        self.assertEqual(my_view_cached2(HttpRequest()), "response")
-
     def test_require_safe_accepts_only_safe_methods(self):
         """
         Test for the require_safe decorator.
@@ -150,6 +151,27 @@ class DecoratorsTest(TestCase):
         self.assertIsInstance(my_safe_view(request), HttpResponseNotAllowed)
         request.method = 'DELETE'
         self.assertIsInstance(my_safe_view(request), HttpResponseNotAllowed)
+
+    async def test_async_require_http_methods_returns_coroutine(self):
+        """
+        Async Test for the require_http_methods decorator.
+        Ensures async views are awaited and returned as coroutines while
+        sync views return synchronously
+        Refs #31949.
+        """
+        self.assertTrue(require_http_methods.async_capable)
+        self.assertTrue(require_http_methods.sync_capable)
+
+        @require_http_methods(["HEAD"])
+        def my_sync_view(request):
+            return HttpResponse("OK")
+
+        @require_http_methods(["HEAD"])
+        async def my_async_view(request):
+            return HttpResponse("OK")
+
+        self.assertFalse(asyncio.iscoroutinefunction(my_sync_view))
+        self.assertTrue(asyncio.iscoroutinefunction(my_async_view))
 
 
 # For testing method_decorator, a decorator that assumes a single argument.
@@ -426,6 +448,100 @@ class MethodDecoratorTests(SimpleTestCase):
                     return "tests"
 
 
+class SyncAndAsyncMiddlewareTests(TestCase):
+    """
+    Tests to make sure all builtin decorators declare themselves as sync and
+    async capable.
+    """
+    def test_cache_page_decorator(self):
+        self.assertTrue(cache_control.sync_capable)
+        self.assertTrue(cache_control.async_capable)
+
+    def test_cache_control_decorator(self):
+        self.assertTrue(cache_control.sync_capable)
+        self.assertTrue(cache_control.async_capable)
+
+    def test_never_cache_decorator(self):
+        self.assertTrue(never_cache.sync_capable)
+        self.assertTrue(never_cache.async_capable)
+
+    def test_xframe_options_deny_decorator(self):
+        self.assertTrue(xframe_options_deny.sync_capable)
+        self.assertTrue(xframe_options_deny.async_capable)
+
+    def test_xframe_options_sameorigin_decorator(self):
+        self.assertTrue(xframe_options_sameorigin.sync_capable)
+        self.assertTrue(xframe_options_sameorigin.async_capable)
+
+    def test_xframe_options_exempt_decorator(self):
+        self.assertTrue(xframe_options_exempt.sync_capable)
+        self.assertTrue(xframe_options_exempt.async_capable)
+
+    def test_csrf_protect_decorator(self):
+        self.assertTrue(csrf_protect.sync_capable)
+        self.assertTrue(csrf_protect.async_capable)
+
+    def test_requires_csrf_token_decorator(self):
+        self.assertTrue(requires_csrf_token.sync_capable)
+        self.assertTrue(requires_csrf_token.async_capable)
+
+    def test_ensure_csrf_cookie_decorator(self):
+        self.assertTrue(ensure_csrf_cookie.sync_capable)
+        self.assertTrue(ensure_csrf_cookie.async_capable)
+
+    def test_csrf_exempt_decorator(self):
+        self.assertTrue(csrf_exempt.sync_capable)
+        self.assertTrue(csrf_exempt.async_capable)
+
+    def test_sensitive_variables_decorator(self):
+        self.assertTrue(sensitive_variables.sync_capable)
+        self.assertTrue(sensitive_variables.async_capable)
+
+    def test_sensitive_post_parameters_decorator(self):
+        self.assertTrue(sensitive_post_parameters.sync_capable)
+        self.assertTrue(sensitive_post_parameters.async_capable)
+
+    def test_gzip_page_decorator(self):
+        self.assertTrue(gzip_page.sync_capable)
+        self.assertTrue(gzip_page.async_capable)
+
+    def test_require_http_methods_decorator(self):
+        self.assertTrue(require_http_methods.sync_capable)
+        self.assertTrue(require_http_methods.async_capable)
+
+    def test_require_GET_decorator(self):
+        self.assertTrue(require_GET.sync_capable)
+        self.assertTrue(require_GET.async_capable)
+
+    def test_require_POST_decorator(self):
+        self.assertTrue(require_POST.sync_capable)
+        self.assertTrue(require_POST.async_capable)
+
+    def test_require_safe_decorator(self):
+        self.assertTrue(require_safe.sync_capable)
+        self.assertTrue(require_safe.async_capable)
+
+    def test_condition_decorator(self):
+        self.assertTrue(condition.sync_capable)
+        self.assertTrue(condition.async_capable)
+
+    def test_etag_decorator(self):
+        self.assertTrue(etag.sync_capable)
+        self.assertTrue(etag.async_capable)
+
+    def test_last_modified_decorator(self):
+        self.assertTrue(last_modified.sync_capable)
+        self.assertTrue(last_modified.async_capable)
+
+    def test_vary_on_headers_decorator(self):
+        self.assertTrue(vary_on_headers.sync_capable)
+        self.assertTrue(vary_on_headers.async_capable)
+
+    def test_vary_on_cookie_decorator(self):
+        self.assertTrue(vary_on_cookie.sync_capable)
+        self.assertTrue(vary_on_cookie.async_capable)
+
+
 class XFrameOptionsDecoratorsTests(TestCase):
     """
     Tests for the X-Frame-Options decorators.
@@ -440,6 +556,17 @@ class XFrameOptionsDecoratorsTests(TestCase):
         r = a_view(HttpRequest())
         self.assertEqual(r.headers['X-Frame-Options'], 'DENY')
 
+    async def test_deny_operator_with_async_view(self):
+        """
+        Ensures @xframe_options_deny properly sets the X-Frame-Options header
+        for an async view.
+        """
+        @xframe_options_deny
+        async def an_async_view(request):
+            return HttpResponse()
+        r = await an_async_view(HttpRequest())
+        self.assertEqual(r.headers['X-Frame-Options'], 'DENY')
+
     def test_sameorigin_decorator(self):
         """
         Ensures @xframe_options_sameorigin properly sets the X-Frame-Options
@@ -449,6 +576,17 @@ class XFrameOptionsDecoratorsTests(TestCase):
         def a_view(request):
             return HttpResponse()
         r = a_view(HttpRequest())
+        self.assertEqual(r.headers['X-Frame-Options'], 'SAMEORIGIN')
+
+    async def test_sameorigin_decorator_with_async_view(self):
+        """
+        Ensures @xframe_options_sameorigin properly sets the X-Frame-Options
+        header for an async view.
+        """
+        @xframe_options_sameorigin
+        async def an_async_view(request):
+            return HttpResponse()
+        r = await an_async_view(HttpRequest())
         self.assertEqual(r.headers['X-Frame-Options'], 'SAMEORIGIN')
 
     def test_exempt_decorator(self):
@@ -466,18 +604,105 @@ class XFrameOptionsDecoratorsTests(TestCase):
 
         # Since the real purpose of the exempt decorator is to suppress
         # the middleware's functionality, let's make sure it actually works...
-        r = XFrameOptionsMiddleware(a_view)(req)
-        self.assertIsNone(r.get('X-Frame-Options', None))
+        resp = XFrameOptionsMiddleware(a_view)(req)
+        self.assertIsNone(resp.get('X-Frame-Options', None))
 
+    async def test_exempt_decorator_with_async_view(self):
+        """
+        Ensures @xframe_options_exempt properly instructs the
+        XFrameOptionsMiddleware to NOT set the header for an async view.
+        """
+        @xframe_options_exempt
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        resp = await an_async_view(req)
+        self.assertIsNone(resp.get('X-Frame-Options', None))
+        self.assertTrue(resp.xframe_options_exempt)
+
+        # Since the real purpose of the exempt decorator is to suppress
+        # the middleware's functionality, let's make sure it actually works...
+        resp = await XFrameOptionsMiddleware(an_async_view)(req)
+        self.assertIsNone(resp.get('X-Frame-Options', None))
+
+
+class CacheDecoratorTest(TestCase):
+    """
+    Tests for the caching decorators.
+    """
+    def test_cache_page_decorator(self):
+        @cache_page(123)
+        def a_view(request):
+            return 'response'
+        resp = a_view(HttpRequest())
+        self.assertEqual(resp, 'response')
+
+    async def test_cache_page_decorator_with_async_view(self):
+        @cache_page(123)
+        async def an_async_view(request):
+            return 'response'
+        resp = await an_async_view(HttpRequest())
+        self.assertEqual(resp, 'response')
+
+    def test_cache_page_decorator_with_key_prefix(self):
+        @cache_page(123, key_prefix='test')
+        def a_view(request):
+            return 'response'
+        resp = a_view(HttpRequest())
+        self.assertEqual(resp, 'response')
+
+    async def test_cache_page_decorator_with_key_prefix_with_async_view(self):
+        @cache_page(123, key_prefix='test')
+        async def an_async_view(request):
+            return 'response'
+        resp = await an_async_view(HttpRequest())
+        self.assertEqual(resp, 'response')
+
+    def test_cache_control_empty_decorator(self):
+        @cache_control()
+        def a_view(request):
+            return HttpResponse()
+        resp = a_view(HttpRequest())
+        self.assertEqual(resp.headers['Cache-Control'], '')
+
+    async def test_cache_control_empty_decorator_with_async_view(self):
+        @cache_control()
+        async def an_async_view(request):
+            return HttpResponse()
+        resp = await an_async_view(HttpRequest())
+        self.assertEqual(resp.headers['Cache-Control'], '')
+
+    def test_cache_control_full_decorator(self):
+        @cache_control(max_age=123, private=True, public=True, custom=456)
+        def a_view(request):
+            return HttpResponse()
+        resp = a_view(HttpRequest())
+        cache_control_headers = resp.headers['Cache-Control'].split(', ')
+        self.assertEqual(
+            set(cache_control_headers),
+            {'max-age=123', 'private', 'public', 'custom=456'}
+        )
+
+    async def test_cache_control_full_decorator_with_async_view(self):
+        @cache_control(max_age=123, private=True, public=True, custom=456)
+        async def an_async_view(request):
+            return HttpResponse()
+        resp = await an_async_view(HttpRequest())
+        cache_control_headers = resp.headers['Cache-Control'].split(', ')
+        self.assertEqual(
+            set(cache_control_headers),
+            {'max-age=123', 'private', 'public', 'custom=456'}
+        )
 
 class NeverCacheDecoratorTest(SimpleTestCase):
     def test_never_cache_decorator(self):
         @never_cache
         def a_view(request):
             return HttpResponse()
-        r = a_view(HttpRequest())
+        resp = a_view(HttpRequest())
+        cache_control_headers = resp.headers['Cache-Control'].split(', ')
         self.assertEqual(
-            set(r.headers['Cache-Control'].split(', ')),
+            set(cache_control_headers),
             {'max-age=0', 'no-cache', 'no-store', 'must-revalidate', 'private'},
         )
 
@@ -493,6 +718,17 @@ class NeverCacheDecoratorTest(SimpleTestCase):
         with self.assertRaisesMessage(TypeError, msg):
             MyClass().a_view(HttpRequest())
 
+    async def test_never_cache_decorator_with_async_view(self):
+        @never_cache
+        async def an_async_view(request):
+            return HttpResponse()
+        resp = await an_async_view(HttpRequest())
+        cache_control_headers = resp.headers['Cache-Control'].split(', ')
+        self.assertEqual(
+            set(cache_control_headers),
+            {'max-age=0', 'no-cache', 'no-store', 'must-revalidate', 'private'},
+        )
+
 
 class CacheControlDecoratorTest(SimpleTestCase):
     def test_cache_control_decorator_http_request(self):
@@ -507,3 +743,472 @@ class CacheControlDecoratorTest(SimpleTestCase):
         )
         with self.assertRaisesMessage(TypeError, msg):
             MyClass().a_view(HttpRequest())
+
+
+class CsrfDecoratorTest(TestCase):
+
+    csrf_token = '1bcdefghij2bcdefghij3bcdefghij4bcdefghij5bcdefghij6bcdefghijABCD'
+
+    def setUp(self):
+        # Use request that will trigger the middleware but has a csrf token
+        self.req = HttpRequest()
+        self.req.method = 'POST'
+        self.req.POST['csrfmiddlewaretoken'] = self.csrf_token
+        self.req.COOKIES['csrftoken'] = self.csrf_token
+
+    def test_csrf_protect_decorator(self):
+        @csrf_protect
+        def a_view(request):
+            return HttpResponse()
+        resp = a_view(self.req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(self.req.csrf_processing_done)
+
+    async def test_csrf_protect_decorator_with_async_view(self):
+        @csrf_protect
+        async def an_async_view(request):
+            return HttpResponse()
+        resp = await an_async_view(self.req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(self.req.csrf_processing_done)
+
+    def test_requires_csrf_token_decorator(self):
+        @requires_csrf_token
+        def a_view(request):
+            return HttpResponse()
+        resp = a_view(self.req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(self.req.csrf_processing_done)
+
+    async def test_requires_csrf_token_decorator_with_async_view(self):
+        @requires_csrf_token
+        async def an_async_view(request):
+            return HttpResponse()
+        resp = await an_async_view(self.req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(self.req.csrf_processing_done)
+
+    def test_ensure_csrf_cookie_decorator(self):
+        @ensure_csrf_cookie
+        def a_view(request):
+            return HttpResponse()
+        resp = a_view(self.req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(self.req.csrf_processing_done)
+
+    async def test_ensure_csrf_cookie_decorator_with_async_view(self):
+        @ensure_csrf_cookie
+        async def an_async_view(request):
+            return HttpResponse()
+        resp = await an_async_view(self.req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(self.req.csrf_processing_done)
+
+    def test_csrf_exempt_decorator(self):
+        @csrf_exempt
+        def a_view(request):
+            return HttpResponse()
+        resp = a_view(self.req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(hasattr(self.req, 'csrf_processing_done'))
+
+    async def test_csrf_exempt_decorator_with_async_view(self):
+        @csrf_exempt
+        async def an_async_view(request):
+            return HttpResponse()
+        resp = await an_async_view(self.req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(hasattr(self.req, 'csrf_processing_done'))
+
+
+class DebugDecoratorsTests(TestCase):
+    """
+    Tests for the debug decorators.
+    """
+    def test_sensitive_variables_decorator(self):
+        @sensitive_variables()
+        def a_func():
+            return 'result'
+        # The decorator takes effect when the function is called
+        result = a_func()
+        self.assertEqual(result, 'result')
+        self.assertEqual(a_func.sensitive_variables, '__ALL__')
+
+    async def test_sensitive_variables_decorator_with_async_function(self):
+        @sensitive_variables()
+        async def an_async_func():
+            return 'result'
+        # The decorator takes effect when the function is called
+        result = await an_async_func()
+        self.assertEqual(result, 'result')
+        self.assertEqual(an_async_func.sensitive_variables, '__ALL__')
+
+    def test_sensitive_post_parameters_decorator(self):
+        @sensitive_post_parameters()
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(req.sensitive_post_parameters, '__ALL__')
+
+    async def test_sensitive_post_parameters_decorator_with_async_view(self):
+        @sensitive_post_parameters()
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(req.sensitive_post_parameters, '__ALL__')
+
+
+class GzipDecoratorsTests(TestCase):
+    """
+    Tests for the gzip decorator.
+    """
+    # Gzip ignores content that is too short
+    content = "Content " * 100
+
+    def test_gzip_decorator(self):
+        @gzip_page
+        def a_view(request):
+            return HttpResponse(content=self.content)
+        req = HttpRequest()
+        req.META['HTTP_ACCEPT_ENCODING'] = 'gzip'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers['Content-Encoding'], 'gzip')
+
+    async def test_gzip_decorator_with_async_view(self):
+        @gzip_page
+        async def an_async_view(request):
+            return HttpResponse(content=self.content)
+        req = HttpRequest()
+        req.META['HTTP_ACCEPT_ENCODING'] = 'gzip'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers['Content-Encoding'], 'gzip')
+
+
+class VaryDecoratorsTests(TestCase):
+    """
+    Tests for the vary decorator.
+    """
+    def test_vary_on_headers_decorator(self):
+        @vary_on_headers('Header', 'Another-header')
+        def a_view(request):
+            return HttpResponse()
+        resp = a_view(HttpRequest())
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('Header, Another-header', resp.headers['Vary'])
+
+    async def test_vary_on_headers_decorator_with_async_view(self):
+        @vary_on_headers('Header', 'Another-header')
+        async def an_async_view(request):
+            return HttpResponse()
+        resp = await an_async_view(HttpRequest())
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('Header, Another-header', resp.headers['Vary'])
+
+    def test_vary_on_cookie_decorator(self):
+        @vary_on_cookie
+        def a_view(request):
+            return HttpResponse()
+        resp = a_view(HttpRequest())
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('Cookie', resp.headers['Vary'])
+
+    async def test_vary_on_cookie_decorator_with_async_view(self):
+        @vary_on_cookie
+        async def an_async_view(request):
+            return HttpResponse()
+        resp = await an_async_view(HttpRequest())
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('Cookie', resp.headers['Vary'])
+
+
+class ConditionalDecoratorTests(TestCase):
+    """
+    Tests for the conditional decorators.
+    """
+    def etag_func(self, request, *args, **kwargs):
+        return '"abc123"'
+
+    def last_modified_func(self, request, *args, **kwargs):
+        return datetime(2020, 1, 1, 0, 0, 0)
+
+    def test_etag_decorator_match_all(self):
+        @etag(etag_func=self.etag_func)
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.META['HTTP_IF_MATCH'] = '*'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    async def test_etag_decorator_match_all_with_async_view(self):
+        @etag(etag_func=self.etag_func)
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.META['HTTP_IF_MATCH'] = '*'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_etag_decorator_no_match(self):
+        @etag(etag_func=self.etag_func)
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.META['HTTP_IF_MATCH'] = '"def456"'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 412)
+
+    async def test_etag_decorator_no_match_with_async_view(self):
+        @etag(etag_func=self.etag_func)
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.META['HTTP_IF_MATCH'] = '"def456"'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 412)
+
+    def test_etag_decorator_not_modified(self):
+        @etag(etag_func=self.etag_func)
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'GET'
+        req.META['HTTP_IF_NONE_MATCH'] = '*'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 304)
+
+    async def test_etag_decorator_not_modified_with_async_view(self):
+        @etag(etag_func=self.etag_func)
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'GET'
+        req.META['HTTP_IF_NONE_MATCH'] = '*'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 304)
+
+    def test_last_modified_decorator_modified_since(self):
+        @last_modified(last_modified_func=self.last_modified_func)
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        # One day BEFORE the last_modified_func datetime
+        req.META['HTTP_IF_MODIFIED_SINCE'] = 'Tue, 31 Dec 2019 00:00:00 GMT'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    async def test_last_modified_decorator_modified_since_with_async_view(self):
+        @last_modified(last_modified_func=self.last_modified_func)
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        # One day BEFORE the last_modified_func datetime
+        req.META['HTTP_IF_MODIFIED_SINCE'] = 'Tue, 31 Dec 2019 00:00:00 GMT'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_last_modified_decorator_not_modified_since(self):
+        @last_modified(last_modified_func=self.last_modified_func)
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'GET'
+        # One day AFTER the last_modified_func datetime
+        req.META['HTTP_IF_MODIFIED_SINCE'] = 'Thu, 02 Jan 2020 00:00:00 GMT'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 304)
+
+    async def test_last_modified_decorator_not_modified_since_with_async_view(self):
+        @last_modified(last_modified_func=self.last_modified_func)
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'GET'
+        # One day AFTER the last_modified_func datetime
+        req.META['HTTP_IF_MODIFIED_SINCE'] = 'Thu, 02 Jan 2020 00:00:00 GMT'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 304)
+
+    def test_condition_decorator_match_all(self):
+        @condition(
+            etag_func=self.etag_func,
+            last_modified_func=self.last_modified_func,
+        )
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.META['HTTP_IF_MATCH'] = '*'
+        # One day BEFORE the last_modified_func datetime
+        req.META['HTTP_IF_MODIFIED_SINCE'] = 'Tue, 31 Dec 2019 00:00:00 GMT'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    async def test_condition_decorator_match_all_with_async_view(self):
+        @condition(
+            etag_func=self.etag_func,
+            last_modified_func=self.last_modified_func,
+        )
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.META['HTTP_IF_MATCH'] = '*'
+        # One day BEFORE the last_modified_func datetime
+        req.META['HTTP_IF_MODIFIED_SINCE'] = 'Tue, 31 Dec 2019 00:00:00 GMT'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+
+class RequireHttpMethodsDecoratorTests(TestCase):
+    def test_require_get_decorator_successful(self):
+        @require_GET
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'GET'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    async def test_require_get_decorator_successful_with_async_view(self):
+        @require_GET
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'GET'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_require_get_decorator_unsuccessful(self):
+        @require_GET
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'POST'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 405)
+
+    async def test_require_get_decorator_unsuccessful_with_async_view(self):
+        @require_GET
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'POST'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 405)
+
+    def test_require_post_decorator_successful(self):
+        @require_POST
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'POST'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    async def test_require_post_decorator_successful_with_async_view(self):
+        @require_POST
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'POST'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_require_post_decorator_unsuccessful(self):
+        @require_POST
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'GET'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 405)
+
+    async def test_require_post_decorator_unsuccessful_with_async_view(self):
+        @require_POST
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'GET'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 405)
+
+    def test_require_safe_decorator_successful(self):
+        @require_safe
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        # Only GET and HEAD are safe methods
+        req.method = 'HEAD'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    async def test_require_safe_decorator_successful_with_async_view(self):
+        @require_safe
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        # Only GET and HEAD are safe methods
+        req.method = 'HEAD'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_require_safe_decorator_unsuccessful(self):
+        @require_safe
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        # Only GET and HEAD are safe methods
+        req.method = 'POST'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 405)
+
+    async def test_require_safe_decorator_unsuccessful_with_async_view(self):
+        @require_safe
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        # Only GET and HEAD are safe methods
+        req.method = 'POST'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 405)
+
+    def test_require_http_methods_decorator_successful(self):
+        @require_http_methods(['HEAD'])
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'HEAD'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    async def test_require_http_methods_decorator_successful_with_async_view(self):
+        @require_http_methods(['HEAD'])
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'HEAD'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_require_http_methods_decorator_unsuccessful(self):
+        @require_http_methods(['HEAD'])
+        def a_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'GET'
+        resp = a_view(req)
+        self.assertEqual(resp.status_code, 405)
+
+    async def test_require_http_methods_decorator_unsuccessful_with_async_view(self):
+        @require_http_methods(['HEAD'])
+        async def an_async_view(request):
+            return HttpResponse()
+        req = HttpRequest()
+        req.method = 'GET'
+        resp = await an_async_view(req)
+        self.assertEqual(resp.status_code, 405)

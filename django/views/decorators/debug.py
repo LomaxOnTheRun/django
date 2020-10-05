@@ -1,8 +1,10 @@
-import functools
+from functools import wraps
 
 from django.http import HttpRequest
+from django.utils.decorators import sync_and_async_middleware
 
 
+@sync_and_async_middleware
 def sensitive_variables(*variables):
     """
     Indicate which variables used in the decorated function are sensitive so
@@ -33,17 +35,17 @@ def sensitive_variables(*variables):
         )
 
     def decorator(func):
-        @functools.wraps(func)
+        @wraps(func)
         def sensitive_variables_wrapper(*func_args, **func_kwargs):
-            if variables:
-                sensitive_variables_wrapper.sensitive_variables = variables
-            else:
-                sensitive_variables_wrapper.sensitive_variables = '__ALL__'
+            sensitive_variables_wrapper.sensitive_variables = (
+                variables if variables else '__ALL__'
+            )
             return func(*func_args, **func_kwargs)
         return sensitive_variables_wrapper
     return decorator
 
 
+@sync_and_async_middleware
 def sensitive_post_parameters(*parameters):
     """
     Indicate which POST parameters used in the decorated view are sensitive,
@@ -74,18 +76,21 @@ def sensitive_post_parameters(*parameters):
             '@sensitive_post_parameters.'
         )
 
-    def decorator(view):
-        @functools.wraps(view)
+    def process_request(request):
+        assert isinstance(request, HttpRequest), (
+            "sensitive_post_parameters didn't receive an HttpRequest. "
+            "If you are decorating a classmethod, be sure to use "
+            "@method_decorator."
+        )
+        request.sensitive_post_parameters = (
+            parameters if parameters else '__ALL__'
+        )
+        return request
+
+    def decorator(view_func):
+        @wraps(view_func)
         def sensitive_post_parameters_wrapper(request, *args, **kwargs):
-            assert isinstance(request, HttpRequest), (
-                "sensitive_post_parameters didn't receive an HttpRequest. "
-                "If you are decorating a classmethod, be sure to use "
-                "@method_decorator."
-            )
-            if parameters:
-                request.sensitive_post_parameters = parameters
-            else:
-                request.sensitive_post_parameters = '__ALL__'
-            return view(request, *args, **kwargs)
+            request = process_request(request)
+            return view_func(request, *args, **kwargs)
         return sensitive_post_parameters_wrapper
     return decorator

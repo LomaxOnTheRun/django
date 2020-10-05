@@ -1,6 +1,9 @@
-from functools import wraps
+from django.utils.decorators import (
+    sync_and_async_middleware, sync_async_wrapper,
+)
 
 
+@sync_and_async_middleware
 def xframe_options_deny(view_func):
     """
     Modify a view function so its response has the X-Frame-Options HTTP
@@ -11,14 +14,14 @@ def xframe_options_deny(view_func):
     def some_view(request):
         ...
     """
-    def wrapped_view(*args, **kwargs):
-        resp = view_func(*args, **kwargs)
-        if resp.get('X-Frame-Options') is None:
-            resp['X-Frame-Options'] = 'DENY'
-        return resp
-    return wraps(view_func)(wrapped_view)
+    def process_response(response):
+        if response.get('X-Frame-Options') is None:
+            response['X-Frame-Options'] = 'DENY'
+        return response
+    return sync_async_wrapper(view_func, process_response)
 
 
+@sync_and_async_middleware
 def xframe_options_sameorigin(view_func):
     """
     Modify a view function so its response has the X-Frame-Options HTTP
@@ -29,14 +32,14 @@ def xframe_options_sameorigin(view_func):
     def some_view(request):
         ...
     """
-    def wrapped_view(*args, **kwargs):
-        resp = view_func(*args, **kwargs)
-        if resp.get('X-Frame-Options') is None:
-            resp['X-Frame-Options'] = 'SAMEORIGIN'
-        return resp
-    return wraps(view_func)(wrapped_view)
+    def process_response(response):
+        if response.get('X-Frame-Options') is None:
+            response['X-Frame-Options'] = 'SAMEORIGIN'
+        return response
+    return sync_async_wrapper(view_func, process_response)
 
 
+@sync_and_async_middleware
 def xframe_options_exempt(view_func):
     """
     Modify a view function by setting a response variable that instructs
@@ -46,8 +49,7 @@ def xframe_options_exempt(view_func):
     def some_view(request):
         ...
     """
-    def wrapped_view(*args, **kwargs):
-        resp = view_func(*args, **kwargs)
-        resp.xframe_options_exempt = True
-        return resp
-    return wraps(view_func)(wrapped_view)
+    def process_response(response):
+        response.xframe_options_exempt = True
+        return response
+    return sync_async_wrapper(view_func, process_response)

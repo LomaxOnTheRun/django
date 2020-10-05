@@ -1,5 +1,6 @@
 "Functions that help with dynamically creating decorators for views."
 
+import asyncio
 from functools import partial, update_wrapper, wraps
 
 
@@ -111,13 +112,41 @@ def decorator_from_middleware(middleware_class):
     return make_middleware_decorator(middleware_class)()
 
 
+def sync_and_async_middleware(func):
+    """
+    Mark a middleware factory as returning a hybrid middleware supporting both
+    types of request.
+    """
+    func.sync_capable = True
+    func.async_capable = True
+    return func
+
+
+def sync_only_middleware(func):
+    """
+    Mark a middleware factory as returning a sync middleware.
+    This is the default.
+    """
+    func.sync_capable = True
+    func.async_capable = False
+    return func
+
+
+def async_only_middleware(func):
+    """Mark a middleware factory as returning an async middleware."""
+    func.sync_capable = False
+    func.async_capable = True
+    return func
+
+
 def make_middleware_decorator(middleware_class):
     def _make_decorator(*m_args, **m_kwargs):
+        @sync_and_async_middleware
         def _decorator(view_func):
             middleware = middleware_class(view_func, *m_args, **m_kwargs)
 
             @wraps(view_func)
-            def _wrapped_view(request, *args, **kwargs):
+            def _wrapped_view_sync(request, *args, **kwargs):
                 if hasattr(middleware, 'process_request'):
                     result = middleware.process_request(request)
                     if result is not None:
@@ -147,33 +176,69 @@ def make_middleware_decorator(middleware_class):
                     if hasattr(middleware, 'process_response'):
                         return middleware.process_response(request, response)
                 return response
-            return _wrapped_view
+
+            @wraps(view_func)
+            async def _wrapped_view_async(request, *args, **kwargs):
+                if hasattr(middleware, 'process_request'):
+                    result = middleware.process_request(request)
+                    if result is not None:
+                        return result
+                if hasattr(middleware, 'process_view'):
+                    result = middleware.process_view(request, view_func, args, kwargs)
+                    if result is not None:
+                        return result
+                try:
+                    response = await view_func(request, *args, **kwargs)
+                except Exception as e:
+                    if hasattr(middleware, 'process_exception'):
+                        result = middleware.process_exception(request, e)
+                        if result is not None:
+                            return result
+                    raise
+                if hasattr(response, 'render') and callable(response.render):
+                    if hasattr(middleware, 'process_template_response'):
+                        response = middleware.process_template_response(request, response)
+                    # Defer running of process_response until after the template
+                    # has been rendered:
+                    if hasattr(middleware, 'process_response'):
+                        def callback(response):
+                            return middleware.process_response(request, response)
+                        response.add_post_render_callback(callback)
+                else:
+                    if hasattr(middleware, 'process_response'):
+                        return middleware.process_response(request, response)
+                return response
+
+            return (
+                _wrapped_view_async
+                if asyncio.iscoroutinefunction(view_func)
+                else _wrapped_view_sync
+            )
         return _decorator
     return _make_decorator
 
 
-def sync_and_async_middleware(func):
+def sync_async_wrapper(view_func, process_response=None, **decorator_kwargs):
     """
-    Mark a middleware factory as returning a hybrid middleware supporting both
-    types of request.
+    Wrapper for decorator to allow it to be applied directly to both sync and
+    async views.
     """
-    func.sync_capable = True
-    func.async_capable = True
-    return func
+    @wraps(view_func)
+    def _wrapped_view_sync(request, *args, **kwargs):
+        response = view_func(request, *args, **kwargs)
+        if process_response:
+            response = process_response(response, **decorator_kwargs)
+        return response
 
+    @wraps(view_func)
+    async def _wrapped_view_async(request, *args, **kwargs):
+        response = await view_func(request, *args, **kwargs)
+        if process_response:
+            response = process_response(response, **decorator_kwargs)
+        return response
 
-def sync_only_middleware(func):
-    """
-    Mark a middleware factory as returning a sync middleware.
-    This is the default.
-    """
-    func.sync_capable = True
-    func.async_capable = False
-    return func
-
-
-def async_only_middleware(func):
-    """Mark a middleware factory as returning an async middleware."""
-    func.sync_capable = False
-    func.async_capable = True
-    return func
+    return (
+        _wrapped_view_async
+        if asyncio.iscoroutinefunction(view_func)
+        else _wrapped_view_sync
+    )
